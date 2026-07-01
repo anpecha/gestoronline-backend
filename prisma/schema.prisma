@@ -1,0 +1,156 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum AdPlatform {
+  META
+  GOOGLE
+}
+
+enum CampaignStatus {
+  ACTIVE
+  PAUSED
+  DELETED
+  ARCHIVED
+}
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  logo      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users     User[]
+  adAccounts AdAccount[]
+}
+
+model User {
+  id               String   @id @default(cuid())
+  email            String   @unique
+  passwordHash     String
+  name             String
+  role             UserRole  @default(OWNER)
+  organizationId   String
+  organization     Organization @relation(fields: [organizationId], references: [id])
+  twoFactorSecret  String?
+  twoFactorEnabled Boolean  @default(false)
+  locale           String   @default("pt-BR")
+  refreshToken     String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([organizationId])
+}
+
+model AdAccount {
+  id              String   @id @default(cuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id])
+  platform        AdPlatform
+  name            String
+  accountId       String
+  accessToken     String?
+  tokenExpiresAt  DateTime?
+  status          String   @default("ACTIVE")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  campaigns Campaign[]
+
+  @@unique([organizationId, platform, accountId])
+  @@index([organizationId])
+}
+
+model Campaign {
+  id              String   @id @default(cuid())
+  adAccountId     String
+  adAccount       AdAccount @relation(fields: [adAccountId], references: [id])
+  externalId      String
+  name            String
+  status          CampaignStatus @default(ACTIVE)
+  budget          Float?
+  budgetType      String?
+  objective       String?
+  startDate       DateTime?
+  endDate         DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  metrics CampaignMetric[]
+
+  @@unique([adAccountId, externalId])
+  @@index([adAccountId])
+}
+
+model CampaignMetric {
+  id          String   @id @default(cuid())
+  campaignId  String
+  campaign    Campaign @relation(fields: [campaignId], references: [id])
+  date        DateTime
+  impressions Int      @default(0)
+  clicks      Int      @default(0)
+  spend       Float    @default(0)
+  ctr         Float    @default(0)
+  cpc         Float    @default(0)
+  conversions Int      @default(0)
+  roas        Float?
+  createdAt   DateTime @default(now())
+
+  @@unique([campaignId, date])
+  @@index([campaignId])
+}
+
+enum AlertKind {
+  BALANCE_LOW
+  CAMPAIGN_ENDED
+  BUDGET_EXCEEDED
+  TOKEN_EXPIRING
+  SYNC_ERROR
+}
+
+enum AlertSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+model Alert {
+  id             String        @id @default(cuid())
+  organizationId String
+  kind           AlertKind
+  severity       AlertSeverity @default(MEDIUM)
+  title          String
+  message        String
+  read           Boolean       @default(false)
+  link           String?
+  createdAt      DateTime      @default(now())
+
+  @@index([organizationId, read])
+  @@index([organizationId, createdAt])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([token])
+  @@index([userId])
+}
