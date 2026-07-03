@@ -3,9 +3,13 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
+import * as speakeasy from 'speakeasy';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
+import { EnableTwoFactorDto, VerifyTwoFactorDto } from './dto/two-factor.dto';
 
 @Injectable()
 export class AuthService {
@@ -161,6 +165,113 @@ export class AuthService {
       createdAt: user.createdAt.toISOString(),
       updatedAt: user.updatedAt.toISOString(),
     };
+  }
+
+  async updateProfile(userId: string, dto: UpdateProfileDto) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('Usuário não encontrado');
+
+    if (dto.email && dto.email !== user.email) {
+      const existing = await this.prisma.user.findUnique({ where: { email: dto.email } });
+      if (existing) throw new ConflictException('Email já cadastrado');
+    }
+
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        name: dto.name,
+        email: dto.email,
+        locale: dto.locale,
+      },
+      include: { organization: true },
+    });
+
+    return {
+      id: updated.id,
+      email: updated.email,
+      name: updated.name,
+      role: updated.role,
+      organizationId: updated.organizationId,
+      organization: updated.organization,
+      locale: updated.locale,
+      twoFactorEnabled: updated.twoFactorEnabled,
+      createdAt: updated.createdAt.toISOString(),
+      updatedAt: updated.updatedAt.toISOString(),
+    };
+  }
+
+  async changePassword(userId: string, dto: ChangePasswordDto) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('Usuário não encontrado');
+
+    const valid = await bcrypt.compare(dto.currentPassword, user.passwordHash);
+    if (!valid) throw new UnauthorizedException('Senha atual inválida');
+
+    const passwordHash = await bcrypt.hash(dto.newPassword, 12);
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash },
+    });
+
+    return { message: 'Senha alterada com sucesso.' };
+  }
+
+  async enableTwoFactor(userId: string, dto: EnableTwoFactorDto) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('Usuário não encontrado');
+
+    const valid = await bcrypt.compare(dto.password, user.passwordHash);
+    if (!valid) throw new UnauthorizedException('Senha inválida');
+
+    const secret = speakeasy.generateSecret({ name: `GestorOnline:${user.email}` });
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { twoFactorSecret: secret.base32 },
+    });
+
+    return {
+      secret: secret.base32,
+      otpauth_url: secret.otpauth_url,
+    };
+  }
+
+  async verifyTwoFactor(userId: string, dto: VerifyTwoFactorDto) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user || !user.twoFactorSecret) {
+      throw new BadRequestException('2FA não configurado');
+    }
+
+    const verified = speakeasy.totp.verify({
+      secret: user.twoFactorSecret,
+      encoding: 'base32',
+      token: dto.code,
+      window: 1,
+    });
+
+    if (!verified) throw new BadRequestException('Código inválido');
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { twoFactorEnabled: true },
+    });
+
+    return { message: '2FA ativado com sucesso' };
+  }
+
+  async disableTwoFactor(userId: string, dto: EnableTwoFactorDto) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('Usuário não encontrado');
+
+    const valid = await bcrypt.compare(dto.password, user.passwordHash);
+    if (!valid) throw new UnauthorizedException('Senha inválida');
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { twoFactorSecret: null, twoFactorEnabled: false },
+    });
+
+    return { message: '2FA desativado com sucesso' };
   }
 
   async forgotPassword(email: string) {
