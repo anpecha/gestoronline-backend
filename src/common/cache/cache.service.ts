@@ -11,6 +11,7 @@ export class CacheService {
       port: Number(process.env.REDIS_PORT) || 6379,
       lazyConnect: true,
     });
+    this.client.on('error', () => {});
     this.client.connect().catch(() => {});
   }
 
